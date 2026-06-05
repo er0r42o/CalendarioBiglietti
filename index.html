@@ -9,33 +9,14 @@
     <script src="app.js" defer></script>
   </head>
   <body>
-    <div class="page-watermark" aria-hidden="true">alee</div>
     <div class="app-shell">
-      <section class="brand-hero" aria-label="Maxel Tour">
-        <img src="assets/maxel-tour-banner.jpg" alt="Maxel Tour flag banner" />
-        <div class="brand-hero-copy">
-          <div class="maxel-logo">
-            <span class="logo-mark">M</span>
-            <span>
-              <strong>Maxel Tour</strong>
-              <small>Vatican tickets</small>
-            </span>
-          </div>
-          <p>Built and organized by alee</p>
-        </div>
-      </section>
-
       <header class="topbar">
         <div class="planner-title">
-          <div class="maxel-logo compact-logo">
-            <span class="logo-mark">M</span>
-            <span>
-              <strong>Maxel Tour</strong>
-              <small>Ticket desk</small>
-            </span>
+          <img class="brand-logo" src="assets/maxel-tour-logo.png" alt="Maxel Tour" />
+          <div>
+            <p class="eyebrow">Vatican ticket planner</p>
+            <h1>Daily Ticket Board</h1>
           </div>
-          <p class="eyebrow">Vatican ticket planner</p>
-          <h1>Daily Ticket Board</h1>
         </div>
         <div class="top-actions">
           <button class="icon-button text-button" id="todayButton" type="button" title="Jump to today's release">
@@ -77,18 +58,18 @@
           <article class="metric bought-card">
             <div class="metric-icon"><i data-lucide="badge-check"></i></div>
             <div>
-              <p>Bought tickets</p>
+              <p>Bought orders</p>
               <strong id="boughtCount">0</strong>
               <span id="ticketCount">0 total admissions</span>
             </div>
           </article>
 
           <article class="metric due-card">
-            <div class="metric-icon"><i data-lucide="bell-ring"></i></div>
+            <div class="metric-icon"><i data-lucide="list-checks"></i></div>
             <div>
-              <p>Next 7 days</p>
-              <strong id="weekDueCount">0</strong>
-              <span id="openCount">0 waiting</span>
+              <p>Selected date</p>
+              <strong id="selectedDateCount">0</strong>
+              <span id="selectedDateInfo">No records selected</span>
             </div>
           </article>
         </section>
@@ -114,9 +95,9 @@
             <div class="panel-heading">
               <div>
                 <p class="section-kicker">Daily action</p>
-                <h2 id="plannerTitle">Ticket Record</h2>
+                <h2 id="plannerTitle">Purchase Record</h2>
               </div>
-              <button class="icon-button" id="clearFormButton" type="button" title="New record">
+              <button class="icon-button" id="clearFormButton" type="button" title="New purchase">
                 <i data-lucide="plus"></i>
               </button>
             </div>
@@ -146,17 +127,27 @@
               </label>
 
               <label>
+                <span>Account</span>
+                <input id="accountName" type="text" placeholder="Account name" />
+              </label>
+
+              <label>
+                <span>Bought at</span>
+                <input id="purchaseDateTime" type="datetime-local" />
+              </label>
+
+              <label>
                 <span>Tickets</span>
                 <input id="ticketQuantity" type="number" min="0" step="1" value="2" />
               </label>
 
               <label>
-                <span>Visit time</span>
+                <span>Entry time</span>
                 <input id="visitTime" type="time" />
               </label>
 
               <label>
-                <span>Confirmation</span>
+                <span>Order/ref</span>
                 <input id="confirmation" type="text" placeholder="Order number" />
               </label>
 
@@ -172,13 +163,13 @@
 
               <label class="wide">
                 <span>Notes</span>
-                <textarea id="notes" rows="4" placeholder="Names, entry details, payment card, reminder notes"></textarea>
+                <textarea id="notes" rows="4"></textarea>
               </label>
 
               <div class="form-actions">
                 <button class="primary-button icon-button text-button" type="submit">
                   <i data-lucide="save"></i>
-                  <span>Save record</span>
+                  <span>Save purchase</span>
                 </button>
                 <button class="icon-button text-button danger-button" id="deleteButton" type="button">
                   <i data-lucide="trash-2"></i>
@@ -186,19 +177,6 @@
                 </button>
               </div>
             </form>
-          </section>
-
-          <section class="panel schedule-panel" aria-labelledby="scheduleTitle">
-            <div class="panel-heading">
-              <div>
-                <p class="section-kicker">Release queue</p>
-                <h2 id="scheduleTitle">Upcoming Buy Days</h2>
-              </div>
-              <button class="icon-button" id="csvButton" type="button" title="Export CSV">
-                <i data-lucide="file-spreadsheet"></i>
-              </button>
-            </div>
-            <div id="taskList" class="task-list"></div>
           </section>
         </div>
 
@@ -220,7 +198,8 @@
           </div>
           <div class="legend" aria-label="Calendar legend">
             <span><b class="dot bought"></b>Bought</span>
-            <span><b class="dot due"></b>Buy today</span>
+            <span><b class="dot partial"></b>Partial</span>
+            <span><b class="dot due"></b>Due</span>
             <span><b class="dot overdue"></b>Overdue</span>
             <span><b class="dot upcoming"></b>Upcoming</span>
             <span><b class="dot closed"></b>Closed Sunday</span>
@@ -247,6 +226,9 @@
                 <option value="not-needed">No need</option>
                 <option value="closed">Closed Sunday</option>
               </select>
+              <button class="icon-button" id="csvButton" type="button" title="Export CSV">
+                <i data-lucide="file-spreadsheet"></i>
+              </button>
             </div>
           </div>
           <div class="table-wrap">
@@ -256,8 +238,10 @@
                   <th>Visit</th>
                   <th>Release</th>
                   <th>Status</th>
+                  <th>Account</th>
                   <th>Qty</th>
-                  <th>Time</th>
+                  <th>Bought</th>
+                  <th>Entry</th>
                   <th>Confirmation</th>
                   <th>Total</th>
                   <th></th>
@@ -269,6 +253,9 @@
           <div id="emptyState" class="empty-state">No ticket records yet.</div>
         </section>
       </main>
+      <footer class="site-footer" aria-label="Credit">
+        <span>alee</span>
+      </footer>
     </div>
   </body>
 </html>
