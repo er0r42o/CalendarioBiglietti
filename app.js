@@ -3,11 +3,12 @@ const ROME_TIME_ZONE = "Europe/Rome";
 
 const STATUS_META = {
   bought: { label: "Bought", className: "status-bought" },
+  partial: { label: "Partial", className: "status-partial" },
   pending: { label: "To buy", className: "status-pending" },
   missed: { label: "Missed", className: "status-missed" },
   "not-needed": { label: "No need", className: "status-not-needed" },
   closed: { label: "Closed", className: "status-closed" },
-  due: { label: "Buy today", className: "status-due" },
+  due: { label: "Due", className: "status-due" },
   overdue: { label: "Overdue", className: "status-overdue" },
   upcoming: { label: "Upcoming", className: "status-upcoming" }
 };
@@ -43,8 +44,8 @@ function cacheElements() {
     "todayTargetStatus",
     "boughtCount",
     "ticketCount",
-    "weekDueCount",
-    "openCount",
+    "selectedDateCount",
+    "selectedDateInfo",
     "releaseTime",
     "leadDays",
     "statusMessage",
@@ -54,6 +55,8 @@ function cacheElements() {
     "visitDate",
     "releaseDate",
     "ticketStatus",
+    "accountName",
+    "purchaseDateTime",
     "ticketQuantity",
     "visitTime",
     "confirmation",
@@ -62,7 +65,6 @@ function cacheElements() {
     "notes",
     "clearFormButton",
     "deleteButton",
-    "taskList",
     "csvButton",
     "calendarGrid",
     "monthLabel",
@@ -85,7 +87,9 @@ function loadState() {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
     if (!saved) return;
     state.settings = normalizeSettings(saved.settings || {});
-    state.tickets = Array.isArray(saved.tickets) ? saved.tickets : [];
+    state.tickets = Array.isArray(saved.tickets)
+      ? saved.tickets.map(normalizeImportedTicket).filter((ticket) => ticket.visitDate)
+      : [];
     state.lastNotificationDate = saved.lastNotificationDate || "";
   } catch {
     setStatusMessage("Saved data could not be read.");
@@ -138,14 +142,11 @@ function wireEvents() {
   });
 
   els.visitDate.addEventListener("change", () => {
-    const record = findTicketByVisitDate(els.visitDate.value);
-    if (record) fillForm(record);
-    else {
-      els.recordId.value = "";
-      updateReleaseField();
-      state.selectedVisitDate = els.visitDate.value;
-      renderCalendar();
-    }
+    els.recordId.value = "";
+    els.ticketStatus.value = isClosedVisitDate(els.visitDate.value) ? "closed" : "bought";
+    state.selectedVisitDate = els.visitDate.value;
+    updateReleaseField();
+    renderCalendar();
   });
 
   els.ticketForm.addEventListener("submit", (event) => {
@@ -154,7 +155,7 @@ function wireEvents() {
   });
 
   els.clearFormButton.addEventListener("click", () => {
-    resetForm();
+    resetForm(state.selectedVisitDate || getTodayTargetDate());
   });
 
   els.deleteButton.addEventListener("click", () => {
@@ -191,13 +192,13 @@ function wireEvents() {
 function setInitialDates() {
   const targetDate = getTodayTargetDate();
   state.visibleMonth = getMonthKey(fromISO(targetDate));
-  pickVisitDate(targetDate);
+  state.selectedVisitDate = targetDate;
+  resetForm(targetDate);
 }
 
 function renderAll() {
   renderClockAndReminder();
   renderOverview();
-  renderTasks();
   renderCalendar();
   renderRecords();
   refreshIcons();
@@ -209,7 +210,7 @@ function renderClockAndReminder() {
   const releaseTime = state.settings.releaseTime;
   const releaseInstant = zonedTimeToDate(ROME_TIME_ZONE, romeDate, releaseTime);
   const currentTargetDate = getTodayTargetDate();
-  const currentRecord = findTicketByVisitDate(currentTargetDate);
+  const currentSummary = getDateSummary(currentTargetDate);
   const timeText = new Intl.DateTimeFormat("en-GB", {
     timeZone: ROME_TIME_ZONE,
     hour: "2-digit",
@@ -222,8 +223,8 @@ function renderClockAndReminder() {
 
   if (isClosedVisitDate(currentTargetDate)) {
     els.releaseCountdown.textContent = `No Sunday tickets for ${formatDate(currentTargetDate)}`;
-  } else if (currentRecord?.status === "bought") {
-    els.releaseCountdown.textContent = "Today's target is bought";
+  } else if (currentSummary.boughtQuantity > 0) {
+    els.releaseCountdown.textContent = `${currentSummary.boughtQuantity} tickets recorded for today`;
   } else if (now >= releaseInstant) {
     els.releaseCountdown.textContent = `Open now for ${formatDate(currentTargetDate)}`;
     maybeNotify(romeDate, currentTargetDate);
@@ -236,45 +237,22 @@ function renderClockAndReminder() {
 
 function renderOverview() {
   const todayTarget = getTodayTargetDate();
-  const todayRecord = findTicketByVisitDate(todayTarget);
+  const todaySummary = getDateSummary(todayTarget);
+  const selectedDate = state.selectedVisitDate || todayTarget;
+  const selectedSummary = getDateSummary(selectedDate);
   const boughtRecords = state.tickets.filter((ticket) => ticket.status === "bought");
   const boughtAdmissions = boughtRecords.reduce(
     (sum, ticket) => sum + normalizeQuantity(ticket.quantity),
     0
   );
-  const nextWeek = getReleaseTasks(7);
-  const waiting = nextWeek.filter((task) =>
-    ["due", "overdue", "pending"].includes(task.status)
-  ).length;
-  const closed = nextWeek.filter((task) => task.status === "closed").length;
-
   els.todayTarget.textContent = formatDate(todayTarget);
-  els.todayTargetStatus.innerHTML = renderPillHtml(getDisplayStatus(todayTarget, todayRecord));
+  els.todayTargetStatus.innerHTML = renderPillHtml(todaySummary.status);
   els.boughtCount.textContent = String(boughtRecords.length);
   els.ticketCount.textContent = `${boughtAdmissions} total admissions`;
-  els.weekDueCount.textContent = String(waiting);
-  els.openCount.textContent = closed ? `${closed} closed/no action` : `${waiting} waiting`;
-}
-
-function renderTasks() {
-  const tasks = getReleaseTasks(21);
-  els.taskList.innerHTML = "";
-
-  tasks.forEach((task) => {
-    const button = document.createElement("button");
-    button.className = "task-row";
-    button.type = "button";
-    button.innerHTML = `
-      <div class="task-date">${formatShortDate(task.releaseDate)}</div>
-      <div class="task-main">
-        <strong>${formatDate(task.visitDate)}</strong>
-        <span>${getTaskSubtext(task)}</span>
-      </div>
-      ${renderPillHtml(task.status)}
-    `;
-    button.addEventListener("click", () => pickVisitDate(task.visitDate));
-    els.taskList.appendChild(button);
-  });
+  els.selectedDateCount.textContent = String(selectedSummary.records.length);
+  els.selectedDateInfo.textContent = selectedSummary.records.length
+    ? `${formatDate(selectedDate)} · ${selectedSummary.totalQuantity} tickets`
+    : `${formatDate(selectedDate)} · no records`;
 }
 
 function renderCalendar() {
@@ -307,9 +285,8 @@ function renderCalendar() {
 
   for (let day = 1; day <= daysInMonth; day += 1) {
     const visitDate = toISO(new Date(year, month, day));
-    const releaseDate = getReleaseDateForVisit(visitDate);
-    const record = findTicketByVisitDate(visitDate);
-    const status = getDisplayStatus(visitDate, record);
+    const summary = getDateSummary(visitDate);
+    const status = summary.status;
     const weekdayLabel = formatWeekday(visitDate);
     const cell = document.createElement("button");
     cell.type = "button";
@@ -327,7 +304,7 @@ function renderCalendar() {
       </div>
       ${renderPillHtml(status)}
       <div class="day-details">
-        ${renderCalendarDetails(record, releaseDate, visitDate)}
+        ${renderCalendarDetails(summary)}
       </div>
     `;
     cell.addEventListener("click", () => pickVisitDate(visitDate));
@@ -340,7 +317,11 @@ function renderRecords() {
   const query = els.searchRecords.value.trim().toLowerCase();
   const rows = state.tickets
     .slice()
-    .sort((a, b) => a.visitDate.localeCompare(b.visitDate))
+    .sort((a, b) => {
+      const dateCompare = a.visitDate.localeCompare(b.visitDate);
+      if (dateCompare !== 0) return dateCompare;
+      return String(a.purchaseDateTime || "").localeCompare(String(b.purchaseDateTime || ""));
+    })
     .filter((ticket) => filter === "all" || ticket.status === filter)
     .filter((ticket) => {
       if (!query) return true;
@@ -348,6 +329,8 @@ function renderRecords() {
         ticket.visitDate,
         getReleaseDateForVisit(ticket.visitDate),
         ticket.status,
+        ticket.accountName,
+        ticket.purchaseDateTime,
         ticket.confirmation,
         ticket.notes,
         ticket.bookingLink,
@@ -365,11 +348,14 @@ function renderRecords() {
   rows.forEach((ticket) => {
     const tr = document.createElement("tr");
     const releaseDate = getReleaseDateForVisit(ticket.visitDate);
+    tr.dataset.recordId = ticket.id;
     tr.innerHTML = `
       <td>${formatDate(ticket.visitDate)}</td>
       <td>${formatShortDate(releaseDate)}</td>
       <td>${renderPillHtml(ticket.status)}</td>
+      <td>${escapeHtml(ticket.accountName || "--")}</td>
       <td>${normalizeQuantity(ticket.quantity)}</td>
+      <td>${formatDateTime(ticket.purchaseDateTime)}</td>
       <td>${ticket.visitTime || "--"}</td>
       <td>${escapeHtml(ticket.confirmation || "--")}</td>
       <td>${formatMoney(ticket.totalCost)}</td>
@@ -384,13 +370,17 @@ function renderRecords() {
         </div>
       </td>
     `;
+    tr.addEventListener("click", (event) => {
+      if (event.target.closest("a, button")) return;
+      openPurchaseRecord(ticket);
+    });
     els.recordsBody.appendChild(tr);
   });
 
   els.recordsBody.querySelectorAll("[data-edit]").forEach((button) => {
     button.addEventListener("click", () => {
       const record = state.tickets.find((ticket) => ticket.id === button.dataset.edit);
-      if (record) pickVisitDate(record.visitDate);
+      if (record) openPurchaseRecord(record);
     });
   });
 
@@ -403,13 +393,14 @@ function saveTicketFromForm() {
   const status = isClosedVisitDate(visitDate) ? "closed" : els.ticketStatus.value;
 
   const existingById = state.tickets.find((ticket) => ticket.id === els.recordId.value);
-  const existingByDate = state.tickets.find((ticket) => ticket.visitDate === visitDate);
-  const current = existingById || existingByDate;
+  const current = existingById;
   const now = new Date().toISOString();
   const ticket = {
     id: current?.id || makeId(),
     visitDate,
     status,
+    accountName: els.accountName.value.trim(),
+    purchaseDateTime: els.purchaseDateTime.value,
     quantity: normalizeQuantity(els.ticketQuantity.value),
     visitTime: els.visitTime.value,
     confirmation: els.confirmation.value.trim(),
@@ -420,16 +411,21 @@ function saveTicketFromForm() {
     updatedAt: now
   };
 
-  state.tickets = state.tickets.filter(
-    (item) => item.id !== current?.id && item.visitDate !== visitDate
-  );
+  state.tickets = state.tickets.filter((item) => item.id !== current?.id);
   state.tickets.push(ticket);
 
   state.selectedVisitDate = visitDate;
   state.visibleMonth = getMonthKey(fromISO(visitDate));
   saveState();
   fillForm(ticket);
-  setStatusMessage(`Saved ${formatDate(visitDate)}.`);
+  setStatusMessage(`Saved purchase for ${formatDate(visitDate)}.`);
+  renderAll();
+}
+
+function openPurchaseRecord(record) {
+  state.selectedVisitDate = record.visitDate;
+  state.visibleMonth = getMonthKey(fromISO(record.visitDate));
+  fillForm(record);
   renderAll();
 }
 
@@ -458,6 +454,8 @@ function resetForm(visitDate = getTodayTargetDate()) {
   els.recordId.value = "";
   els.visitDate.value = visitDate;
   els.ticketStatus.value = isClosedVisitDate(visitDate) ? "closed" : "bought";
+  els.accountName.value = "";
+  els.purchaseDateTime.value = toDateTimeLocalValue(new Date());
   els.ticketQuantity.value = "2";
   els.totalCost.value = "";
   state.selectedVisitDate = visitDate;
@@ -469,6 +467,8 @@ function fillForm(ticket) {
   els.recordId.value = ticket.id;
   els.visitDate.value = ticket.visitDate;
   els.ticketStatus.value = isClosedVisitDate(ticket.visitDate) ? "closed" : ticket.status || "bought";
+  els.accountName.value = ticket.accountName || "";
+  els.purchaseDateTime.value = ticket.purchaseDateTime || "";
   els.ticketQuantity.value = normalizeQuantity(ticket.quantity);
   els.visitTime.value = ticket.visitTime || "";
   els.confirmation.value = ticket.confirmation || "";
@@ -481,12 +481,25 @@ function fillForm(ticket) {
 }
 
 function pickVisitDate(visitDate) {
-  const record = findTicketByVisitDate(visitDate);
+  const summary = getDateSummary(visitDate);
   state.selectedVisitDate = visitDate;
-  if (record) fillForm(record);
-  else resetForm(visitDate);
   state.visibleMonth = getMonthKey(fromISO(visitDate));
-  renderCalendar();
+  els.searchRecords.value = visitDate;
+  els.statusFilter.value = "all";
+
+  if (summary.records.length > 0) {
+    fillForm(summary.records[0]);
+    setStatusMessage(`Opened ${summary.records.length} records for ${formatDate(visitDate)}.`);
+  } else {
+    resetForm(visitDate);
+    setStatusMessage(`No saved records for ${formatDate(visitDate)}.`);
+  }
+
+  renderAll();
+  document.querySelector(".records-panel")?.scrollIntoView({
+    behavior: "smooth",
+    block: "start"
+  });
 }
 
 function updateReleaseField() {
@@ -499,35 +512,6 @@ function updateReleaseField() {
     return;
   }
   els.releaseDate.value = formatDate(getReleaseDateForVisit(els.visitDate.value));
-}
-
-function getReleaseTasks(count) {
-  const today = getRomeDateISO();
-  const tasks = [];
-  for (let i = 0; i < count; i += 1) {
-    const releaseDate = addDaysISO(today, i);
-    const visitDate = addDaysISO(releaseDate, state.settings.leadDays);
-    const record = findTicketByVisitDate(visitDate);
-    tasks.push({
-      releaseDate,
-      visitDate,
-      record,
-      status: getDisplayStatus(visitDate, record)
-    });
-  }
-  return tasks;
-}
-
-function getDisplayStatus(visitDate, record) {
-  if (isClosedVisitDate(visitDate)) return "closed";
-  return record?.status || getComputedStatus(visitDate);
-}
-
-function getTaskSubtext(task) {
-  if (task.status === "closed") return "Sunday closed, no ticket release";
-  if (task.record?.confirmation) return escapeHtml(task.record.confirmation);
-  if (task.record?.visitTime) return `Visit time ${escapeHtml(task.record.visitTime)}`;
-  return "Vatican visit date";
 }
 
 function getComputedStatus(visitDate) {
@@ -547,8 +531,45 @@ function getReleaseDateForVisit(visitDate) {
   return addDaysISO(visitDate, -state.settings.leadDays);
 }
 
-function findTicketByVisitDate(visitDate) {
-  return state.tickets.find((ticket) => ticket.visitDate === visitDate);
+function getTicketsByVisitDate(visitDate) {
+  return state.tickets.filter((ticket) => ticket.visitDate === visitDate);
+}
+
+function getDateSummary(visitDate) {
+  const records = getTicketsByVisitDate(visitDate);
+  const boughtRecords = records.filter((ticket) => ticket.status === "bought");
+  const pendingRecords = records.filter((ticket) => ticket.status === "pending");
+  const boughtQuantity = boughtRecords.reduce(
+    (sum, ticket) => sum + normalizeQuantity(ticket.quantity),
+    0
+  );
+  const totalQuantity = records.reduce(
+    (sum, ticket) => sum + normalizeQuantity(ticket.quantity),
+    0
+  );
+  const status = getAggregateStatus(visitDate, records, boughtRecords, pendingRecords);
+
+  return {
+    visitDate,
+    records,
+    boughtRecords,
+    boughtQuantity,
+    totalQuantity,
+    status,
+    accounts: uniqueTexts(records.map((ticket) => ticket.accountName)),
+    entryTimes: uniqueTexts(records.map((ticket) => ticket.visitTime))
+  };
+}
+
+function getAggregateStatus(visitDate, records, boughtRecords, pendingRecords) {
+  if (isClosedVisitDate(visitDate)) return "closed";
+  if (records.length === 0) return getComputedStatus(visitDate);
+  if (boughtRecords.length > 0 && pendingRecords.length > 0) return "partial";
+  if (boughtRecords.length > 0) return "bought";
+  if (pendingRecords.length > 0) return "pending";
+  if (records.some((ticket) => ticket.status === "missed")) return "missed";
+  if (records.every((ticket) => ticket.status === "not-needed")) return "not-needed";
+  return getComputedStatus(visitDate);
 }
 
 function isClosedVisitDate(visitDate) {
@@ -597,8 +618,10 @@ function exportCsv() {
     "Visit date",
     "Release date",
     "Status",
+    "Account",
+    "Bought at",
     "Quantity",
-    "Visit time",
+    "Entry time",
     "Confirmation",
     "Total cost",
     "Booking link",
@@ -611,6 +634,8 @@ function exportCsv() {
       ticket.visitDate,
       getReleaseDateForVisit(ticket.visitDate),
       ticket.status,
+      ticket.accountName || "",
+      ticket.purchaseDateTime || "",
       normalizeQuantity(ticket.quantity),
       ticket.visitTime || "",
       ticket.confirmation || "",
@@ -655,6 +680,8 @@ function normalizeImportedTicket(ticket) {
     id: ticket.id || makeId(),
     visitDate: ticket.visitDate,
     status: STATUS_META[ticket.status] ? ticket.status : "bought",
+    accountName: ticket.accountName || "",
+    purchaseDateTime: ticket.purchaseDateTime || "",
     quantity: normalizeQuantity(ticket.quantity),
     visitTime: ticket.visitTime || "",
     confirmation: ticket.confirmation || "",
@@ -671,33 +698,22 @@ function renderPillHtml(status) {
   return `<span class="status-pill ${meta.className}">${meta.label}</span>`;
 }
 
-function renderCalendarDetails(record, releaseDate, visitDate) {
-  if (isClosedVisitDate(visitDate)) {
+function renderCalendarDetails(summary) {
+  if (isClosedVisitDate(summary.visitDate)) {
     return "<span><b>Sunday</b> closed</span><span>No tickets to buy</span>";
   }
 
-  const details = [`<span><b>Buy</b> ${formatShortDate(releaseDate)}</span>`];
+  const details = [];
 
-  if (!record) {
-    details.push("<span>No record</span>");
+  if (summary.records.length === 0) {
+    details.push("<span>No purchases</span>");
     return details.join("");
   }
 
-  if (record.visitTime) details.push(`<span><b>Time</b> ${escapeHtml(record.visitTime)}</span>`);
-  if (record.quantity !== undefined) {
-    details.push(`<span><b>Qty</b> ${normalizeQuantity(record.quantity)}</span>`);
-  }
-  if (record.confirmation) {
-    details.push(`<span><b>Ref</b> ${escapeHtml(shorten(record.confirmation, 18))}</span>`);
-  }
-  if (record.totalCost) details.push(`<span><b>Total</b> ${formatMoney(record.totalCost)}</span>`);
-  if (record.notes) {
-    details.push(
-      `<span class="calendar-note" title="${escapeAttribute(record.notes)}"><b>Note</b> ${escapeHtml(
-        shorten(record.notes, 26)
-      )}</span>`
-    );
-  }
+  details.push(`<span><b>Tickets</b> ${summary.totalQuantity}</span>`);
+  details.push(`<span><b>Orders</b> ${summary.records.length}</span>`);
+  if (summary.entryTimes.length) details.push(`<span><b>Entry</b> ${escapeHtml(joinShort(summary.entryTimes, 24))}</span>`);
+  if (summary.accounts.length) details.push(`<span><b>Acct</b> ${escapeHtml(joinShort(summary.accounts, 26))}</span>`);
 
   return details.join("");
 }
@@ -751,6 +767,20 @@ function formatWeekday(iso) {
   }).format(fromISO(iso));
 }
 
+function formatDateTime(value) {
+  if (!value) return "--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return escapeHtml(String(value));
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).format(date);
+}
+
 function formatMoney(value) {
   if (value === "" || value === undefined || value === null) return "--";
   const number = Number(value);
@@ -782,6 +812,11 @@ function fromISO(iso) {
 function toISO(date) {
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
   return local.toISOString().slice(0, 10);
+}
+
+function toDateTimeLocalValue(date) {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
 }
 
 function getMonthKey(date) {
@@ -852,6 +887,14 @@ function pad(number) {
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
+}
+
+function uniqueTexts(values) {
+  return [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))];
+}
+
+function joinShort(values, maxLength) {
+  return shorten(values.join(", "), maxLength);
 }
 
 function escapeHtml(value) {
