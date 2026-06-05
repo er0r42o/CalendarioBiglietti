@@ -4,9 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Vatican Ticket Planner</title>
-    <link rel="stylesheet" href="styles.css?v=20260605-unlock-errors" />
+    <link rel="icon" href="assets/maxel-tour-logo.png" />
+    <link rel="stylesheet" href="styles.css?v=20260606-status-actions" />
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js" defer></script>
-    <script src="app.js?v=20260605-unlock-errors" defer></script>
+    <script src="app.js?v=20260606-status-actions" defer></script>
   </head>
   <body>
     <section class="auth-screen" id="authScreen" aria-labelledby="authTitle">
@@ -155,6 +156,8 @@
                 <select id="ticketStatus">
                   <option value="bought">Bought</option>
                   <option value="pending">To buy</option>
+                  <option value="sell-online">Sell online</option>
+                  <option value="sold-out">Sold out</option>
                   <option value="missed">Missed</option>
                   <option value="not-needed">No need</option>
                   <option value="closed">Closed Sunday</option>
@@ -234,6 +237,8 @@
           <div class="legend" aria-label="Calendar legend">
             <span><b class="dot bought"></b>Bought</span>
             <span><b class="dot partial"></b>Partial</span>
+            <span><b class="dot sell-online"></b>Sell online</span>
+            <span><b class="dot sold-out"></b>Sold out</span>
             <span><b class="dot due"></b>Due</span>
             <span><b class="dot upcoming"></b>Upcoming</span>
             <span><b class="dot closed"></b>Closed Sunday</span>
@@ -264,6 +269,8 @@
                 <option value="all">All</option>
                 <option value="bought">Bought</option>
                 <option value="pending">To buy</option>
+                <option value="sell-online">Sell online</option>
+                <option value="sold-out">Sold out</option>
                 <option value="missed">Missed</option>
                 <option value="not-needed">No need</option>
                 <option value="closed">Closed Sunday</option>
@@ -301,7 +308,7 @@
         </section>
       </main>
       <footer class="site-footer" aria-label="Credit">
-        <span>made with ❤️ by alee</span>
+        <span></span>
       </footer>
     </div>
   </body>
