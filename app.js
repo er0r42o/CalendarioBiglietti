@@ -6,12 +6,24 @@ const STATUS_META = {
   bought: { label: "Bought", className: "status-bought" },
   partial: { label: "Partial", className: "status-partial" },
   pending: { label: "To buy", className: "status-pending" },
+  "sell-online": { label: "Sell online", className: "status-sell-online" },
+  "sold-out": { label: "Sold out", className: "status-sold-out" },
   missed: { label: "Missed", className: "status-missed" },
   "not-needed": { label: "No need", className: "status-not-needed" },
   closed: { label: "Closed", className: "status-closed" },
   due: { label: "Due", className: "status-due" },
   upcoming: { label: "Upcoming", className: "status-upcoming" }
 };
+
+const MANUAL_STATUS_OPTIONS = [
+  "bought",
+  "pending",
+  "sell-online",
+  "sold-out",
+  "missed",
+  "not-needed",
+  "closed"
+];
 
 const state = {
   settings: {
@@ -139,7 +151,7 @@ function loadState() {
     if (!saved) return;
     state.settings = normalizeSettings(saved.settings || {});
     state.tickets = Array.isArray(saved.tickets)
-      ? saved.tickets.map(normalizeImportedTicket).filter((ticket) => ticket.visitDate)
+      ? mergeTickets([], saved.tickets).filter((ticket) => ticket.visitDate)
       : [];
     state.lastNotificationDate = saved.lastNotificationDate || "";
     state.notifiedReminders = saved.notifiedReminders || {};
@@ -478,7 +490,7 @@ function renderRecords() {
     tr.innerHTML = `
       <td>${formatDate(ticket.visitDate)}</td>
       <td>${formatShortDate(releaseDate)}</td>
-      <td>${renderPillHtml(ticket.status)}</td>
+      <td>${renderStatusSelectHtml(ticket)}</td>
       <td>${escapeHtml(ticket.accountName || "--")}</td>
       <td>${normalizeQuantity(ticket.quantity)}</td>
       <td>${formatDateTime(ticket.purchaseDateTime)}</td>
@@ -497,10 +509,16 @@ function renderRecords() {
       </td>
     `;
     tr.addEventListener("click", (event) => {
-      if (event.target.closest("a, button")) return;
+      if (event.target.closest("a, button, select")) return;
       openPurchaseRecord(ticket);
     });
     els.recordsBody.appendChild(tr);
+  });
+
+  els.recordsBody.querySelectorAll("[data-status-id]").forEach((select) => {
+    select.addEventListener("change", () => {
+      updateTicketStatus(select.dataset.statusId, select.value);
+    });
   });
 
   els.recordsBody.querySelectorAll("[data-edit]").forEach((button) => {
@@ -511,6 +529,18 @@ function renderRecords() {
   });
 
   refreshIcons();
+}
+
+function updateTicketStatus(id, nextStatus) {
+  const record = state.tickets.find((ticket) => ticket.id === id);
+  if (!record) return;
+
+  const status = isClosedVisitDate(record.visitDate) ? "closed" : nextStatus;
+  record.status = STATUS_META[status] ? status : "pending";
+  record.updatedAt = new Date().toISOString();
+  saveState();
+  setStatusMessage(`${formatDate(record.visitDate)} marked ${getStatusLabel(record.status).toLowerCase()}.`);
+  renderAll();
 }
 
 function saveTicketFromForm() {
@@ -706,8 +736,11 @@ function getDateSummary(visitDate) {
 function getAggregateStatus(visitDate, records, boughtRecords, pendingRecords) {
   if (isClosedVisitDate(visitDate)) return "closed";
   if (records.length === 0) return getComputedStatus(visitDate);
-  if (boughtRecords.length > 0 && pendingRecords.length > 0) return "partial";
+  const recordStatuses = new Set(records.map((ticket) => ticket.status));
+  if (boughtRecords.length > 0 && recordStatuses.size > 1) return "partial";
   if (boughtRecords.length > 0) return "bought";
+  if (recordStatuses.has("sell-online")) return "sell-online";
+  if (recordStatuses.has("sold-out")) return "sold-out";
   if (pendingRecords.length > 0) return "pending";
   if (records.some((ticket) => ticket.status === "missed")) return "missed";
   if (records.every((ticket) => ticket.status === "not-needed")) return "not-needed";
@@ -1039,27 +1072,47 @@ function getStatusLabel(status) {
   return STATUS_META[status]?.label || status || "";
 }
 
-function normalizeImportedTicket(ticket) {
-  return {
-    id: ticket.id || makeId(),
-    visitDate: ticket.visitDate,
-    status: STATUS_META[ticket.status] ? ticket.status : "bought",
-    accountName: ticket.accountName || "",
-    purchaseDateTime: ticket.purchaseDateTime || "",
-    quantity: normalizeQuantity(ticket.quantity),
-    visitTime: ticket.visitTime || "",
-    confirmation: ticket.confirmation || "",
-    totalCost: ticket.totalCost || "",
-    bookingLink: ticket.bookingLink || "",
-    notes: ticket.notes || "",
-    createdAt: ticket.createdAt || new Date().toISOString(),
-    updatedAt: ticket.updatedAt || new Date().toISOString()
+function normalizeImportedTicket(ticket = {}) {
+  const source = ticket && typeof ticket === "object" ? ticket : {};
+  const normalized = {
+    id: "",
+    visitDate: source.visitDate || "",
+    status: STATUS_META[source.status] ? source.status : "bought",
+    accountName: source.accountName || "",
+    purchaseDateTime: source.purchaseDateTime || "",
+    quantity: normalizeQuantity(source.quantity),
+    visitTime: source.visitTime || "",
+    confirmation: source.confirmation || "",
+    totalCost: source.totalCost || "",
+    bookingLink: source.bookingLink || "",
+    notes: source.notes || "",
+    createdAt: source.createdAt || new Date().toISOString(),
+    updatedAt: source.updatedAt || new Date().toISOString()
   };
+
+  normalized.id = normalizeKeyPart(source.id) || makeStableTicketId(normalized);
+  return normalized;
 }
 
 function renderPillHtml(status) {
   const meta = STATUS_META[status] || STATUS_META.pending;
   return `<span class="status-pill ${meta.className}">${meta.label}</span>`;
+}
+
+function renderStatusSelectHtml(ticket) {
+  const status = STATUS_META[ticket.status] ? ticket.status : "pending";
+  return `
+    <select class="status-select ${STATUS_META[status].className}" data-status-id="${escapeAttribute(ticket.id)}" title="Update status">
+      ${renderStatusOptions(status)}
+    </select>
+  `;
+}
+
+function renderStatusOptions(selectedStatus) {
+  return MANUAL_STATUS_OPTIONS.map((status) => {
+    const selected = status === selectedStatus ? " selected" : "";
+    return `<option value="${escapeAttribute(status)}"${selected}>${escapeHtml(getStatusLabel(status))}</option>`;
+  }).join("");
 }
 
 function renderCalendarDetails(summary) {
@@ -1076,6 +1129,7 @@ function renderCalendarDetails(summary) {
 
   details.push(`<span><b>Tickets</b> ${summary.totalQuantity}</span>`);
   details.push(`<span><b>Orders</b> ${summary.records.length}</span>`);
+  details.push(`<span><b>Status</b> ${escapeHtml(joinShort(uniqueTexts(summary.records.map((ticket) => getStatusLabel(ticket.status))), 26))}</span>`);
   if (summary.entryTimes.length) details.push(`<span><b>Entry</b> ${escapeHtml(joinShort(summary.entryTimes, 24))}</span>`);
   if (summary.accounts.length) details.push(`<span><b>Acct</b> ${escapeHtml(joinShort(summary.accounts, 26))}</span>`);
 
@@ -1329,17 +1383,126 @@ function mergeTickets(existingTickets, sharedTickets) {
   [...existingTickets, ...sharedTickets].forEach((ticket) => {
     const normalized = normalizeImportedTicket(ticket);
     const current = byId.get(normalized.id);
-    if (!current || getTicketTimestamp(normalized) >= getTicketTimestamp(current)) {
+    if (shouldReplaceTicket(current, normalized)) {
       byId.set(normalized.id, normalized);
     }
   });
 
-  return [...byId.values()];
+  const byIdentity = new Map();
+
+  byId.forEach((ticket) => {
+    const identityKey = getTicketIdentityKey(ticket);
+    const current = byIdentity.get(identityKey);
+    if (shouldReplaceTicket(current, ticket)) {
+      byIdentity.set(identityKey, ticket);
+    }
+  });
+
+  return [...byIdentity.values()];
+}
+
+function shouldReplaceTicket(current, candidate) {
+  if (!current) return true;
+
+  const candidateTime = getTicketTimestamp(candidate);
+  const currentTime = getTicketTimestamp(current);
+  if (candidateTime !== currentTime) return candidateTime > currentTime;
+
+  const candidateStable = isStableImportedId(candidate.id);
+  const currentStable = isStableImportedId(current.id);
+  if (candidateStable !== currentStable) return candidateStable;
+
+  return getTicketCompletenessScore(candidate) >= getTicketCompletenessScore(current);
 }
 
 function getTicketTimestamp(ticket) {
   const timestamp = Date.parse(ticket.updatedAt || ticket.createdAt || "");
   return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function getTicketCompletenessScore(ticket) {
+  return [
+    ticket.visitDate,
+    ticket.status,
+    ticket.accountName,
+    ticket.purchaseDateTime,
+    ticket.quantity,
+    ticket.visitTime,
+    ticket.confirmation,
+    ticket.totalCost,
+    ticket.bookingLink,
+    ticket.notes
+  ].filter((value) => normalizeKeyPart(value)).length;
+}
+
+function makeStableTicketId(ticket) {
+  return `imported-${hashString(getTicketIdentityKey(ticket))}`;
+}
+
+function isStableImportedId(id) {
+  return String(id || "").startsWith("imported-");
+}
+
+function getTicketIdentityKey(ticket) {
+  const visitDate = normalizeKeyPart(ticket.visitDate);
+  const confirmation = normalizeKeyPart(ticket.confirmation).toLowerCase();
+  const bookingLink = normalizeKeyPart(ticket.bookingLink).toLowerCase();
+
+  if (visitDate && confirmation) return `confirmation:${visitDate}:${confirmation}`;
+  if (visitDate && bookingLink) return `booking:${visitDate}:${bookingLink}`;
+
+  const accountName = normalizeKeyPart(ticket.accountName).toLowerCase();
+  const purchaseDateTime = normalizeKeyPart(ticket.purchaseDateTime);
+  const visitTime = normalizeKeyPart(ticket.visitTime);
+
+  if (visitDate && accountName) {
+    return `record:${visitDate}:${accountName}:${purchaseDateTime}:${visitTime}`;
+  }
+
+  if (visitDate && purchaseDateTime && visitTime) {
+    return `timed:${visitDate}:${purchaseDateTime}:${visitTime}:${normalizeQuantity(ticket.quantity)}:${normalizeKeyPart(ticket.totalCost)}`;
+  }
+
+  return `content:${getTicketContentKey(ticket)}`;
+}
+
+function getTicketContentKey(ticket) {
+  return JSON.stringify([
+    normalizeKeyPart(ticket.visitDate),
+    STATUS_META[ticket.status] ? ticket.status : "bought",
+    normalizeKeyPart(ticket.accountName).toLowerCase(),
+    normalizeKeyPart(ticket.purchaseDateTime),
+    normalizeQuantity(ticket.quantity),
+    normalizeKeyPart(ticket.visitTime),
+    normalizeKeyPart(ticket.confirmation).toLowerCase(),
+    normalizeKeyPart(ticket.totalCost),
+    normalizeKeyPart(ticket.bookingLink).toLowerCase(),
+    normalizeKeyPart(ticket.notes)
+  ]);
+}
+
+function normalizeKeyPart(value) {
+  return String(value || "").trim().replace(/\s+/g, " ");
+}
+
+function hashString(value) {
+  let h1 = 0xdeadbeef ^ value.length;
+  let h2 = 0x41c6ce57 ^ value.length;
+
+  for (let i = 0; i < value.length; i += 1) {
+    const ch = value.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+
+  h1 =
+    Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^
+    Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 =
+    Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^
+    Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
 }
 
 function escapeHtml(value) {
