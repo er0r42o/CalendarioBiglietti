@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Vatican Ticket Planner</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js" defer></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <div class="page-watermark" aria-hidden="true">alee</div>
+    <div class="app-shell">
+      <section class="brand-hero" aria-label="Maxel Tour">
+        <img src="assets/maxel-tour-banner.jpg" alt="Maxel Tour flag banner" />
+        <div class="brand-hero-copy">
+          <div class="maxel-logo">
+            <span class="logo-mark">M</span>
+            <span>
+              <strong>Maxel Tour</strong>
+              <small>Vatican tickets</small>
+            </span>
+          </div>
+          <p>Built and organized by alee</p>
+        </div>
+      </section>
+
+      <header class="topbar">
+        <div class="planner-title">
+          <div class="maxel-logo compact-logo">
+            <span class="logo-mark">M</span>
+            <span>
+              <strong>Maxel Tour</strong>
+              <small>Ticket desk</small>
+            </span>
+          </div>
+          <p class="eyebrow">Vatican ticket planner</p>
+          <h1>Daily Ticket Board</h1>
+        </div>
+        <div class="top-actions">
+          <button class="icon-button text-button" id="todayButton" type="button" title="Jump to today's release">
+            <i data-lucide="calendar-days"></i>
+            <span>Today</span>
+          </button>
+          <button class="icon-button text-button" id="exportButton" type="button" title="Export backup">
+            <i data-lucide="download"></i>
+            <span>Export</span>
+          </button>
+          <label class="icon-button text-button file-button" title="Import backup">
+            <i data-lucide="upload"></i>
+            <span>Import</span>
+            <input id="importFile" type="file" accept="application/json" />
+          </label>
+        </div>
+      </header>
+
+      <main>
+        <section class="overview-grid" aria-label="Overview">
+          <article class="metric release-card">
+            <div class="metric-icon"><i data-lucide="clock-3"></i></div>
+            <div>
+              <p>Rome time</p>
+              <strong id="romeTime">--:--</strong>
+              <span id="releaseCountdown">Release opens at 12:00</span>
+            </div>
+          </article>
+
+          <article class="metric target-card">
+            <div class="metric-icon"><i data-lucide="target"></i></div>
+            <div>
+              <p>Today's target</p>
+              <strong id="todayTarget">--</strong>
+              <span id="todayTargetStatus">No record yet</span>
+            </div>
+          </article>
+
+          <article class="metric bought-card">
+            <div class="metric-icon"><i data-lucide="badge-check"></i></div>
+            <div>
+              <p>Bought tickets</p>
+              <strong id="boughtCount">0</strong>
+              <span id="ticketCount">0 total admissions</span>
+            </div>
+          </article>
+
+          <article class="metric due-card">
+            <div class="metric-icon"><i data-lucide="bell-ring"></i></div>
+            <div>
+              <p>Next 7 days</p>
+              <strong id="weekDueCount">0</strong>
+              <span id="openCount">0 waiting</span>
+            </div>
+          </article>
+        </section>
+
+        <section class="settings-bar" aria-label="Release settings">
+          <label>
+            <span>Release time</span>
+            <input id="releaseTime" type="time" value="12:00" />
+          </label>
+          <label>
+            <span>Days ahead</span>
+            <input id="leadDays" type="number" min="1" max="365" value="60" />
+          </label>
+          <button class="icon-button text-button" id="reminderButton" type="button" title="Enable browser reminder">
+            <i data-lucide="alarm-clock"></i>
+            <span>Reminder</span>
+          </button>
+          <div class="status-message" id="statusMessage" role="status" aria-live="polite"></div>
+        </section>
+
+        <div class="workspace-grid">
+          <section class="panel planner-panel" aria-labelledby="plannerTitle">
+            <div class="panel-heading">
+              <div>
+                <p class="section-kicker">Daily action</p>
+                <h2 id="plannerTitle">Ticket Record</h2>
+              </div>
+              <button class="icon-button" id="clearFormButton" type="button" title="New record">
+                <i data-lucide="plus"></i>
+              </button>
+            </div>
+
+            <form id="ticketForm" class="ticket-form">
+              <input id="recordId" type="hidden" />
+
+              <label class="wide">
+                <span>Visit date</span>
+                <input id="visitDate" type="date" required />
+              </label>
+
+              <label>
+                <span>Release date</span>
+                <input id="releaseDate" type="text" readonly />
+              </label>
+
+              <label>
+                <span>Status</span>
+                <select id="ticketStatus">
+                  <option value="bought">Bought</option>
+                  <option value="pending">To buy</option>
+                  <option value="missed">Missed</option>
+                  <option value="not-needed">No need</option>
+                  <option value="closed">Closed Sunday</option>
+                </select>
+              </label>
+
+              <label>
+                <span>Tickets</span>
+                <input id="ticketQuantity" type="number" min="0" step="1" value="2" />
+              </label>
+
+              <label>
+                <span>Visit time</span>
+                <input id="visitTime" type="time" />
+              </label>
+
+              <label>
+                <span>Confirmation</span>
+                <input id="confirmation" type="text" placeholder="Order number" />
+              </label>
+
+              <label>
+                <span>Total cost</span>
+                <input id="totalCost" type="number" min="0" step="0.01" placeholder="0.00" />
+              </label>
+
+              <label class="wide">
+                <span>Booking link</span>
+                <input id="bookingLink" type="url" placeholder="https://..." />
+              </label>
+
+              <label class="wide">
+                <span>Notes</span>
+                <textarea id="notes" rows="4" placeholder="Names, entry details, payment card, reminder notes"></textarea>
+              </label>
+
+              <div class="form-actions">
+                <button class="primary-button icon-button text-button" type="submit">
+                  <i data-lucide="save"></i>
+                  <span>Save record</span>
+                </button>
+                <button class="icon-button text-button danger-button" id="deleteButton" type="button">
+                  <i data-lucide="trash-2"></i>
+                  <span>Delete</span>
+                </button>
+              </div>
+            </form>
+          </section>
+
+          <section class="panel schedule-panel" aria-labelledby="scheduleTitle">
+            <div class="panel-heading">
+              <div>
+                <p class="section-kicker">Release queue</p>
+                <h2 id="scheduleTitle">Upcoming Buy Days</h2>
+              </div>
+              <button class="icon-button" id="csvButton" type="button" title="Export CSV">
+                <i data-lucide="file-spreadsheet"></i>
+              </button>
+            </div>
+            <div id="taskList" class="task-list"></div>
+          </section>
+        </div>
+
+        <section class="panel calendar-panel" aria-labelledby="calendarTitle">
+          <div class="panel-heading calendar-heading">
+            <div>
+              <p class="section-kicker">Visit month</p>
+              <h2 id="calendarTitle">Calendar</h2>
+            </div>
+            <div class="calendar-controls">
+              <button class="icon-button" id="prevMonth" type="button" title="Previous month">
+                <i data-lucide="chevron-left"></i>
+              </button>
+              <strong id="monthLabel">Month</strong>
+              <button class="icon-button" id="nextMonth" type="button" title="Next month">
+                <i data-lucide="chevron-right"></i>
+              </button>
+            </div>
+          </div>
+          <div class="legend" aria-label="Calendar legend">
+            <span><b class="dot bought"></b>Bought</span>
+            <span><b class="dot due"></b>Buy today</span>
+            <span><b class="dot overdue"></b>Overdue</span>
+            <span><b class="dot upcoming"></b>Upcoming</span>
+            <span><b class="dot closed"></b>Closed Sunday</span>
+          </div>
+          <div id="calendarGrid" class="calendar-grid"></div>
+        </section>
+
+        <section class="panel records-panel" aria-labelledby="recordsTitle">
+          <div class="panel-heading records-heading">
+            <div>
+              <p class="section-kicker">Saved records</p>
+              <h2 id="recordsTitle">Tickets Bought</h2>
+            </div>
+            <div class="record-tools">
+              <label class="search-field">
+                <i data-lucide="search"></i>
+                <input id="searchRecords" type="search" placeholder="Search" />
+              </label>
+              <select id="statusFilter" title="Filter records">
+                <option value="all">All</option>
+                <option value="bought">Bought</option>
+                <option value="pending">To buy</option>
+                <option value="missed">Missed</option>
+                <option value="not-needed">No need</option>
+                <option value="closed">Closed Sunday</option>
+              </select>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Visit</th>
+                  <th>Release</th>
+                  <th>Status</th>
+                  <th>Qty</th>
+                  <th>Time</th>
+                  <th>Confirmation</th>
+                  <th>Total</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="recordsBody"></tbody>
+            </table>
+          </div>
+          <div id="emptyState" class="empty-state">No ticket records yet.</div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>
