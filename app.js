@@ -1,4 +1,5 @@
 const STORAGE_KEY = "vatican-ticket-planner-v1";
+const ENCRYPTED_DATA_URL = "data/vatican-ticket-planner.enc.json";
 const ROME_TIME_ZONE = "Europe/Rome";
 
 const STATUS_META = {
@@ -9,31 +10,29 @@ const STATUS_META = {
   "not-needed": { label: "No need", className: "status-not-needed" },
   closed: { label: "Closed", className: "status-closed" },
   due: { label: "Due", className: "status-due" },
-  overdue: { label: "Overdue", className: "status-overdue" },
   upcoming: { label: "Upcoming", className: "status-upcoming" }
 };
 
 const state = {
   settings: {
     releaseTime: "12:00",
-    leadDays: 60
+    leadDays: 60,
+    reminderOffsets: [60, 30]
   },
   tickets: [],
   visibleMonth: "",
   selectedVisitDate: "",
-  lastNotificationDate: ""
+  lastNotificationDate: "",
+  notifiedReminders: {}
 };
 
 const els = {};
+let appStarted = false;
 
 document.addEventListener("DOMContentLoaded", () => {
   cacheElements();
-  loadState();
-  hydrateSettings();
-  wireEvents();
-  setInitialDates();
-  renderAll();
-  window.setInterval(renderClockAndReminder, 1000);
+  wireAuthEvents();
+  refreshIcons();
 });
 
 function cacheElements() {
@@ -48,8 +47,13 @@ function cacheElements() {
     "selectedDateInfo",
     "releaseTime",
     "leadDays",
+    "reminder60",
+    "reminder30",
     "statusMessage",
     "reminderButton",
+    "actionToggle",
+    "actionContext",
+    "plannerPanel",
     "ticketForm",
     "recordId",
     "visitDate",
@@ -64,8 +68,8 @@ function cacheElements() {
     "bookingLink",
     "notes",
     "clearFormButton",
+    "closeFormButton",
     "deleteButton",
-    "csvButton",
     "calendarGrid",
     "monthLabel",
     "prevMonth",
@@ -74,12 +78,59 @@ function cacheElements() {
     "emptyState",
     "searchRecords",
     "statusFilter",
+    "exportStartDate",
+    "exportEndDate",
+    "exportFormat",
+    "reportExportButton",
     "todayButton",
-    "exportButton",
-    "importFile"
+    "exportButton"
   ].forEach((id) => {
     els[id] = document.getElementById(id);
   });
+
+  ["authScreen", "appShell", "passwordInput", "unlockButton", "authMessage"].forEach((id) => {
+    els[id] = document.getElementById(id);
+  });
+}
+
+function wireAuthEvents() {
+  els.unlockButton.addEventListener("click", unlockApp);
+  els.passwordInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") unlockApp();
+  });
+}
+
+async function unlockApp() {
+  const password = els.passwordInput.value;
+  if (!password) {
+    els.authMessage.textContent = "Enter the password.";
+    return;
+  }
+
+  els.unlockButton.disabled = true;
+  els.authMessage.textContent = "";
+
+  try {
+    loadState();
+    await loadSharedData(password);
+
+    if (!appStarted) {
+      hydrateSettings();
+      wireEvents();
+      setInitialDates();
+      window.setInterval(renderClockAndReminder, 1000);
+      appStarted = true;
+    }
+
+    renderAll();
+    els.authScreen.classList.add("is-unlocked");
+    els.appShell.classList.remove("is-locked");
+    els.passwordInput.value = "";
+  } catch (error) {
+    console.error(error);
+    els.authMessage.textContent = getUnlockErrorMessage(error);
+    els.unlockButton.disabled = false;
+  }
 }
 
 function loadState() {
@@ -91,9 +142,73 @@ function loadState() {
       ? saved.tickets.map(normalizeImportedTicket).filter((ticket) => ticket.visitDate)
       : [];
     state.lastNotificationDate = saved.lastNotificationDate || "";
+    state.notifiedReminders = saved.notifiedReminders || {};
   } catch {
     setStatusMessage("Saved data could not be read.");
   }
+}
+
+async function loadSharedData(password) {
+  if (window.location.protocol === "file:") {
+    throw new Error("open-with-server");
+  }
+
+  let response;
+  try {
+    response = await fetch(`${ENCRYPTED_DATA_URL}?v=${Date.now()}`, {
+      cache: "no-store"
+    });
+  } catch {
+    throw new Error("shared-data-unavailable");
+  }
+
+  if (!response.ok) throw new Error("shared-data-missing");
+
+  let encryptedPayload;
+  try {
+    encryptedPayload = await response.json();
+  } catch {
+    throw new Error("shared-data-invalid");
+  }
+
+  let shared;
+  try {
+    shared = await decryptSharedPayload(encryptedPayload, password);
+  } catch {
+    throw new Error("wrong-password");
+  }
+
+  if (!Array.isArray(shared.tickets)) throw new Error("Invalid shared data");
+
+  const sharedSettings = normalizeSettings(shared.settings || {});
+  const sharedTickets = shared.tickets
+    .map(normalizeImportedTicket)
+    .filter((ticket) => ticket.visitDate);
+
+  state.settings = {
+    ...state.settings,
+    releaseTime: sharedSettings.releaseTime,
+    leadDays: sharedSettings.leadDays
+  };
+  state.tickets = mergeTickets(state.tickets, sharedTickets);
+  saveState();
+}
+
+function getUnlockErrorMessage(error) {
+  if (error.message === "wrong-password") return "Wrong password.";
+  if (error.message === "open-with-server") {
+    return "Open this from GitHub Pages or the local server, not by double-clicking index.html.";
+  }
+  if (error.message === "shared-data-missing") {
+    return "Encrypted data file is missing. Upload the data folder with the site.";
+  }
+  if (error.message === "shared-data-invalid" || error.message === "Invalid shared data") {
+    return "Encrypted data file is damaged or not the right file.";
+  }
+  if (error.message === "shared-data-unavailable") {
+    return "Encrypted data could not load. Check the site link or connection.";
+  }
+  return "Could not unlock the dashboard.";
 }
 
 function normalizeSettings(savedSettings = {}) {
@@ -105,8 +220,23 @@ function normalizeSettings(savedSettings = {}) {
 
   return {
     releaseTime: savedSettings.releaseTime || "12:00",
-    leadDays: Number.isFinite(leadDays) ? clamp(Math.round(leadDays), 1, 365) : 60
+    leadDays: Number.isFinite(leadDays) ? clamp(Math.round(leadDays), 1, 365) : 60,
+    reminderOffsets: normalizeReminderOffsets(savedSettings.reminderOffsets)
   };
+}
+
+function normalizeReminderOffsets(offsets) {
+  const savedOffsets = Array.isArray(offsets) ? offsets.map(Number) : [60, 30];
+  return savedOffsets
+    .filter((offset) => [60, 30].includes(offset))
+    .sort((a, b) => b - a);
+}
+
+function getSelectedReminderOffsets() {
+  return [
+    els.reminder60.checked ? 60 : null,
+    els.reminder30.checked ? 30 : null
+  ].filter(Boolean);
 }
 
 function saveState() {
@@ -115,7 +245,8 @@ function saveState() {
     JSON.stringify({
       settings: state.settings,
       tickets: state.tickets,
-      lastNotificationDate: state.lastNotificationDate
+      lastNotificationDate: state.lastNotificationDate,
+      notifiedReminders: state.notifiedReminders
     })
   );
 }
@@ -123,6 +254,8 @@ function saveState() {
 function hydrateSettings() {
   els.releaseTime.value = state.settings.releaseTime;
   els.leadDays.value = String(state.settings.leadDays);
+  els.reminder60.checked = state.settings.reminderOffsets.includes(60);
+  els.reminder30.checked = state.settings.reminderOffsets.includes(30);
 }
 
 function wireEvents() {
@@ -141,6 +274,14 @@ function wireEvents() {
     renderAll();
   });
 
+  [els.reminder60, els.reminder30].forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      state.settings.reminderOffsets = getSelectedReminderOffsets();
+      saveState();
+      renderAll();
+    });
+  });
+
   els.visitDate.addEventListener("change", () => {
     els.recordId.value = "";
     els.ticketStatus.value = isClosedVisitDate(els.visitDate.value) ? "closed" : "bought";
@@ -154,8 +295,16 @@ function wireEvents() {
     saveTicketFromForm();
   });
 
+  els.actionToggle.addEventListener("click", () => {
+    startNewPurchase(state.selectedVisitDate || getTodayTargetDate());
+  });
+
   els.clearFormButton.addEventListener("click", () => {
-    resetForm(state.selectedVisitDate || getTodayTargetDate());
+    startNewPurchase(state.selectedVisitDate || getTodayTargetDate());
+  });
+
+  els.closeFormButton.addEventListener("click", () => {
+    collapsePurchaseForm();
   });
 
   els.deleteButton.addEventListener("click", () => {
@@ -174,6 +323,8 @@ function wireEvents() {
 
   els.searchRecords.addEventListener("input", renderRecords);
   els.statusFilter.addEventListener("change", renderRecords);
+  els.exportStartDate.addEventListener("change", renderRecords);
+  els.exportEndDate.addEventListener("change", renderRecords);
 
   els.todayButton.addEventListener("click", () => {
     const visitDate = getTodayTargetDate();
@@ -183,8 +334,7 @@ function wireEvents() {
   });
 
   els.exportButton.addEventListener("click", exportJson);
-  els.csvButton.addEventListener("click", exportCsv);
-  els.importFile.addEventListener("change", importJson);
+  els.reportExportButton.addEventListener("click", exportReport);
 
   els.reminderButton.addEventListener("click", requestReminderPermission);
 }
@@ -194,6 +344,7 @@ function setInitialDates() {
   state.visibleMonth = getMonthKey(fromISO(targetDate));
   state.selectedVisitDate = targetDate;
   resetForm(targetDate);
+  collapsePurchaseForm();
 }
 
 function renderAll() {
@@ -227,12 +378,13 @@ function renderClockAndReminder() {
     els.releaseCountdown.textContent = `${currentSummary.boughtQuantity} tickets recorded for today`;
   } else if (now >= releaseInstant) {
     els.releaseCountdown.textContent = `Open now for ${formatDate(currentTargetDate)}`;
-    maybeNotify(romeDate, currentTargetDate);
   } else {
     els.releaseCountdown.textContent = `Opens in ${formatDuration(
       releaseInstant.getTime() - now.getTime()
     )}`;
   }
+
+  maybeNotify(romeDate, currentTargetDate, releaseInstant, now);
 }
 
 function renderOverview() {
@@ -253,6 +405,7 @@ function renderOverview() {
   els.selectedDateInfo.textContent = selectedSummary.records.length
     ? `${formatDate(selectedDate)} · ${selectedSummary.totalQuantity} tickets`
     : `${formatDate(selectedDate)} · no records`;
+  els.actionContext.textContent = `Selected: ${formatDate(selectedDate)}`;
 }
 
 function renderCalendar() {
@@ -313,34 +466,7 @@ function renderCalendar() {
 }
 
 function renderRecords() {
-  const filter = els.statusFilter.value;
-  const query = els.searchRecords.value.trim().toLowerCase();
-  const rows = state.tickets
-    .slice()
-    .sort((a, b) => {
-      const dateCompare = a.visitDate.localeCompare(b.visitDate);
-      if (dateCompare !== 0) return dateCompare;
-      return String(a.purchaseDateTime || "").localeCompare(String(b.purchaseDateTime || ""));
-    })
-    .filter((ticket) => filter === "all" || ticket.status === filter)
-    .filter((ticket) => {
-      if (!query) return true;
-      return [
-        ticket.visitDate,
-        getReleaseDateForVisit(ticket.visitDate),
-        ticket.status,
-        ticket.accountName,
-        ticket.purchaseDateTime,
-        ticket.confirmation,
-        ticket.notes,
-        ticket.bookingLink,
-        ticket.visitTime
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase()
-        .includes(query);
-    });
+  const rows = getFilteredRecords();
 
   els.recordsBody.innerHTML = "";
   els.emptyState.classList.toggle("is-visible", rows.length === 0);
@@ -419,6 +545,7 @@ function saveTicketFromForm() {
   saveState();
   fillForm(ticket);
   setStatusMessage(`Saved purchase for ${formatDate(visitDate)}.`);
+  collapsePurchaseForm();
   renderAll();
 }
 
@@ -426,7 +553,23 @@ function openPurchaseRecord(record) {
   state.selectedVisitDate = record.visitDate;
   state.visibleMonth = getMonthKey(fromISO(record.visitDate));
   fillForm(record);
+  expandPurchaseForm();
   renderAll();
+}
+
+function startNewPurchase(visitDate) {
+  resetForm(visitDate);
+  expandPurchaseForm();
+}
+
+function expandPurchaseForm() {
+  els.plannerPanel.classList.remove("is-collapsed");
+  els.actionToggle.setAttribute("aria-expanded", "true");
+}
+
+function collapsePurchaseForm() {
+  els.plannerPanel.classList.add("is-collapsed");
+  els.actionToggle.setAttribute("aria-expanded", "false");
 }
 
 function deleteCurrentRecord() {
@@ -484,14 +627,14 @@ function pickVisitDate(visitDate) {
   const summary = getDateSummary(visitDate);
   state.selectedVisitDate = visitDate;
   state.visibleMonth = getMonthKey(fromISO(visitDate));
-  els.searchRecords.value = visitDate;
+  els.searchRecords.value = "";
   els.statusFilter.value = "all";
+  setExportRange(visitDate, visitDate);
+  collapsePurchaseForm();
 
   if (summary.records.length > 0) {
-    fillForm(summary.records[0]);
     setStatusMessage(`Opened ${summary.records.length} records for ${formatDate(visitDate)}.`);
   } else {
-    resetForm(visitDate);
     setStatusMessage(`No saved records for ${formatDate(visitDate)}.`);
   }
 
@@ -518,8 +661,7 @@ function getComputedStatus(visitDate) {
   if (isClosedVisitDate(visitDate)) return "closed";
   const releaseDate = getReleaseDateForVisit(visitDate);
   const today = getRomeDateISO();
-  if (releaseDate < today) return "overdue";
-  if (releaseDate === today) return "due";
+  if (releaseDate <= today) return "due";
   return "upcoming";
 }
 
@@ -582,20 +724,39 @@ function requestReminderPermission() {
     return;
   }
 
+  state.settings.reminderOffsets = getSelectedReminderOffsets();
+  saveState();
+
+  if (state.settings.reminderOffsets.length === 0) {
+    setStatusMessage("Choose at least one reminder time.");
+    return;
+  }
+
   Notification.requestPermission().then((permission) => {
-    if (permission === "granted") setStatusMessage("Reminder enabled while this page is open.");
+    if (permission === "granted") setStatusMessage("Reminders enabled.");
     else setStatusMessage("Reminder permission was not enabled.");
   });
 }
 
-function maybeNotify(romeDate, visitDate) {
-  if (state.lastNotificationDate === romeDate) return;
+function maybeNotify(romeDate, visitDate, releaseInstant, now) {
+  if (isClosedVisitDate(visitDate)) return;
+  if (getDateSummary(visitDate).boughtQuantity > 0) return;
   if (!("Notification" in window) || Notification.permission !== "granted") return;
+  if (!state.settings.reminderOffsets.length) return;
 
-  state.lastNotificationDate = romeDate;
-  saveState();
-  new Notification("Vatican tickets are open", {
-    body: `Buy tickets for ${formatDate(visitDate)} now.`
+  const reminderWindowMs = 5 * 60 * 1000;
+  state.settings.reminderOffsets.forEach((offsetMinutes) => {
+    const remindAt = new Date(releaseInstant.getTime() - offsetMinutes * 60 * 1000);
+    const reminderKey = `${romeDate}:${offsetMinutes}`;
+    const isDue = now >= remindAt && now < new Date(remindAt.getTime() + reminderWindowMs);
+
+    if (!isDue || state.notifiedReminders[reminderKey]) return;
+
+    state.notifiedReminders[reminderKey] = true;
+    saveState();
+    new Notification(`Vatican release in ${formatReminderOffset(offsetMinutes)}`, {
+      body: `Visit date: ${formatDate(visitDate)}.`
+    });
   });
 }
 
@@ -613,66 +774,269 @@ function exportJson() {
   setStatusMessage("Backup exported.");
 }
 
-function exportCsv() {
-  const header = [
-    "Visit date",
-    "Release date",
-    "Status",
-    "Account",
-    "Bought at",
-    "Quantity",
-    "Entry time",
-    "Confirmation",
-    "Total cost",
-    "Booking link",
-    "Notes"
-  ];
-  const rows = state.tickets
-    .slice()
-    .sort((a, b) => a.visitDate.localeCompare(b.visitDate))
-    .map((ticket) => [
-      ticket.visitDate,
-      getReleaseDateForVisit(ticket.visitDate),
-      ticket.status,
-      ticket.accountName || "",
-      ticket.purchaseDateTime || "",
-      normalizeQuantity(ticket.quantity),
-      ticket.visitTime || "",
-      ticket.confirmation || "",
-      ticket.totalCost || "",
-      ticket.bookingLink || "",
-      ticket.notes || ""
-    ]);
-  const csv = [header, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
-  downloadText(`vatican-ticket-records-${getRomeDateISO()}.csv`, csv, "text/csv");
-  setStatusMessage("CSV exported.");
+function exportReport() {
+  const records = getFilteredRecords();
+  if (!records.length) {
+    setStatusMessage("No records in the selected range.");
+    return;
+  }
+
+  const range = getSelectedExportRange();
+  if (els.exportFormat.value === "pdf") {
+    exportPdfReport(records, range);
+    return;
+  }
+
+  exportExcelReport(records, range);
 }
 
-function importJson(event) {
-  const file = event.target.files?.[0];
-  if (!file) return;
+function getFilteredRecords() {
+  const filter = els.statusFilter.value;
+  const query = els.searchRecords.value.trim().toLowerCase();
+  const range = getSelectedExportRange();
 
-  const reader = new FileReader();
-  reader.onload = () => {
-    try {
-      const imported = JSON.parse(String(reader.result));
-      if (!Array.isArray(imported.tickets)) {
-        throw new Error("Missing tickets array");
+  return sortTickets(state.tickets)
+    .filter((ticket) => isTicketInRange(ticket, range))
+    .filter((ticket) => filter === "all" || ticket.status === filter)
+    .filter((ticket) => matchesRecordQuery(ticket, query));
+}
+
+function sortTickets(tickets) {
+  return tickets.slice().sort((a, b) => {
+    const dateCompare = a.visitDate.localeCompare(b.visitDate);
+    if (dateCompare !== 0) return dateCompare;
+    return String(a.purchaseDateTime || "").localeCompare(String(b.purchaseDateTime || ""));
+  });
+}
+
+function matchesRecordQuery(ticket, query) {
+  if (!query) return true;
+  return [
+    ticket.visitDate,
+    getReleaseDateForVisit(ticket.visitDate),
+    getStatusLabel(ticket.status),
+    ticket.status,
+    ticket.accountName,
+    ticket.purchaseDateTime,
+    ticket.confirmation,
+    ticket.notes,
+    ticket.bookingLink,
+    ticket.visitTime
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+    .includes(query);
+}
+
+function getSelectedExportRange() {
+  const start = els.exportStartDate.value;
+  const end = els.exportEndDate.value;
+  if (start && end && start > end) {
+    return { start: end, end: start };
+  }
+  return { start, end };
+}
+
+function setExportRange(start, end = start) {
+  els.exportStartDate.value = start || "";
+  els.exportEndDate.value = end || "";
+}
+
+function isTicketInRange(ticket, range) {
+  if (range.start && ticket.visitDate < range.start) return false;
+  if (range.end && ticket.visitDate > range.end) return false;
+  return true;
+}
+
+function exportExcelReport(records, range) {
+  const reportHtml = buildReportDocument(records, range, { printable: false });
+  downloadText(
+    `maxel-ticket-report-${getRangeSlug(range)}.xls`,
+    `\ufeff${reportHtml}`,
+    "application/vnd.ms-excel;charset=utf-8"
+  );
+  setStatusMessage(`Excel exported with ${records.length} records.`);
+}
+
+function exportPdfReport(records, range) {
+  const reportWindow = window.open("", "_blank", "width=1100,height=800");
+  if (!reportWindow) {
+    setStatusMessage("Allow pop-ups to create the PDF report.");
+    return;
+  }
+
+  reportWindow.document.open();
+  reportWindow.document.write(buildReportDocument(records, range, { printable: true }));
+  reportWindow.document.close();
+  reportWindow.focus();
+  reportWindow.setTimeout(() => reportWindow.print(), 450);
+  setStatusMessage(`PDF report opened with ${records.length} records.`);
+}
+
+function buildReportDocument(records, range, options = {}) {
+  const totals = getReportTotals(records);
+  const logoSrc = new URL("assets/maxel-tour-logo.png", window.location.href).href;
+  const rowsHtml = records
+    .map(
+      (ticket) => `
+        <tr>
+          <td>${escapeHtml(formatDate(ticket.visitDate))}</td>
+          <td>${escapeHtml(formatDate(getReleaseDateForVisit(ticket.visitDate)))}</td>
+          <td>${escapeHtml(getStatusLabel(ticket.status))}</td>
+          <td>${escapeHtml(ticket.accountName || "--")}</td>
+          <td>${normalizeQuantity(ticket.quantity)}</td>
+          <td>${escapeHtml(formatDateTime(ticket.purchaseDateTime))}</td>
+          <td>${escapeHtml(ticket.visitTime || "--")}</td>
+          <td>${escapeHtml(ticket.confirmation || "--")}</td>
+          <td>${escapeHtml(formatMoney(ticket.totalCost))}</td>
+          <td>${ticket.bookingLink ? `<a href="${escapeAttribute(ticket.bookingLink)}">${escapeHtml(ticket.bookingLink)}</a>` : "--"}</td>
+          <td>${escapeHtml(ticket.notes || "--")}</td>
+        </tr>
+      `
+    )
+    .join("");
+
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Maxel Tour Ticket Report</title>
+    <style>
+      body {
+        margin: 24px;
+        color: #102329;
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 12px;
       }
-      state.settings = normalizeSettings(imported.settings || {});
-      state.tickets = imported.tickets.map(normalizeImportedTicket).filter((ticket) => ticket.visitDate);
-      hydrateSettings();
-      saveState();
-      setInitialDates();
-      renderAll();
-      setStatusMessage("Backup imported.");
-    } catch {
-      setStatusMessage("Import failed. Choose a planner JSON backup.");
-    } finally {
-      event.target.value = "";
-    }
+      .report-head {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        margin-bottom: 18px;
+      }
+      .report-head img {
+        width: ${options.printable ? "130px" : "0"};
+        height: auto;
+        ${options.printable ? "" : "display: none;"}
+      }
+      h1 {
+        margin: 0 0 5px;
+        font-size: 24px;
+      }
+      p {
+        margin: 0;
+        color: #65757a;
+      }
+      .summary {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin: 0 0 16px;
+      }
+      .summary span {
+        padding: 7px 9px;
+        border: 1px solid #c7d5d8;
+        border-radius: 6px;
+        font-weight: 700;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th,
+      td {
+        padding: 8px 9px;
+        border: 1px solid #dde6e8;
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        background: #e5f7f8;
+        color: #102329;
+      }
+      a {
+        color: #0d6f7b;
+      }
+      @media print {
+        body {
+          margin: 14mm;
+        }
+        .summary span {
+          break-inside: avoid;
+        }
+        tr {
+          break-inside: avoid;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="report-head">
+      <img src="${escapeAttribute(logoSrc)}" alt="Maxel Tour" />
+      <div>
+        <h1>Ticket Report</h1>
+        <p>${escapeHtml(getRangeLabel(range))}</p>
+      </div>
+    </div>
+    <div class="summary">
+      <span>Orders: ${records.length}</span>
+      <span>Admissions: ${totals.quantity}</span>
+      <span>Total value: ${escapeHtml(totals.costLabel)}</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Visit</th>
+          <th>Release</th>
+          <th>Status</th>
+          <th>Account</th>
+          <th>Qty</th>
+          <th>Bought</th>
+          <th>Entry</th>
+          <th>Confirmation</th>
+          <th>Total</th>
+          <th>Booking link</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+  </body>
+</html>`;
+}
+
+function getReportTotals(records) {
+  const quantity = records.reduce((sum, ticket) => sum + normalizeQuantity(ticket.quantity), 0);
+  const costs = records
+    .map((ticket) => Number(ticket.totalCost))
+    .filter((value) => Number.isFinite(value));
+  const cost = costs.reduce((sum, value) => sum + value, 0);
+
+  return {
+    quantity,
+    costLabel: costs.length ? formatMoney(cost) : "--"
   };
-  reader.readAsText(file);
+}
+
+function getRangeLabel(range) {
+  if (range.start && range.end && range.start === range.end) return formatDate(range.start);
+  if (range.start && range.end) return `${formatDate(range.start)} to ${formatDate(range.end)}`;
+  if (range.start) return `From ${formatDate(range.start)}`;
+  if (range.end) return `Until ${formatDate(range.end)}`;
+  return "All records";
+}
+
+function getRangeSlug(range) {
+  if (range.start && range.end && range.start === range.end) return range.start;
+  if (range.start && range.end) return `${range.start}_to_${range.end}`;
+  if (range.start) return `from_${range.start}`;
+  if (range.end) return `until_${range.end}`;
+  return "all";
+}
+
+function getStatusLabel(status) {
+  return STATUS_META[status]?.label || status || "";
 }
 
 function normalizeImportedTicket(ticket) {
@@ -739,11 +1103,6 @@ function downloadText(filename, content, type) {
   URL.revokeObjectURL(url);
 }
 
-function csvCell(value) {
-  const text = String(value ?? "");
-  return `"${text.replaceAll('"', '""')}"`;
-}
-
 function formatDate(iso) {
   if (!iso) return "--";
   return new Intl.DateTimeFormat("en-GB", {
@@ -797,6 +1156,11 @@ function formatDuration(ms) {
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
   return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+}
+
+function formatReminderOffset(minutes) {
+  if (minutes === 60) return "1 hour";
+  return `${minutes} minutes`;
 }
 
 function addDaysISO(iso, days) {
@@ -895,6 +1259,87 @@ function uniqueTexts(values) {
 
 function joinShort(values, maxLength) {
   return shorten(values.join(", "), maxLength);
+}
+
+async function decryptSharedPayload(payload, password) {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error("Web Crypto is unavailable");
+  }
+
+  const salt = base64ToBytes(payload.salt);
+  const iv = base64ToBytes(payload.iv);
+  const tag = base64ToBytes(payload.tag);
+  const ciphertext = base64ToBytes(payload.ciphertext);
+  const encryptedBytes = concatBytes(ciphertext, tag);
+  const passwordBytes = new TextEncoder().encode(password);
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    passwordBytes,
+    "PBKDF2",
+    false,
+    ["deriveKey"]
+  );
+  const key = await crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt,
+      iterations: payload.iterations,
+      hash: "SHA-256"
+    },
+    keyMaterial,
+    {
+      name: "AES-GCM",
+      length: 256
+    },
+    false,
+    ["decrypt"]
+  );
+  const decrypted = await crypto.subtle.decrypt(
+    {
+      name: "AES-GCM",
+      iv,
+      tagLength: 128
+    },
+    key,
+    encryptedBytes
+  );
+
+  return JSON.parse(new TextDecoder().decode(decrypted));
+}
+
+function base64ToBytes(value) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function concatBytes(first, second) {
+  const result = new Uint8Array(first.length + second.length);
+  result.set(first);
+  result.set(second, first.length);
+  return result;
+}
+
+function mergeTickets(existingTickets, sharedTickets) {
+  const byId = new Map();
+
+  [...existingTickets, ...sharedTickets].forEach((ticket) => {
+    const normalized = normalizeImportedTicket(ticket);
+    const current = byId.get(normalized.id);
+    if (!current || getTicketTimestamp(normalized) >= getTicketTimestamp(current)) {
+      byId.set(normalized.id, normalized);
+    }
+  });
+
+  return [...byId.values()];
+}
+
+function getTicketTimestamp(ticket) {
+  const timestamp = Date.parse(ticket.updatedAt || ticket.createdAt || "");
+  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 function escapeHtml(value) {

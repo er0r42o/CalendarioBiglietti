@@ -4,12 +4,28 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Vatican Ticket Planner</title>
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=20260605-unlock-errors" />
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js" defer></script>
-    <script src="app.js" defer></script>
+    <script src="app.js?v=20260605-unlock-errors" defer></script>
   </head>
   <body>
-    <div class="app-shell">
+    <section class="auth-screen" id="authScreen" aria-labelledby="authTitle">
+      <div class="auth-card">
+        <img src="assets/maxel-tour-logo.png" alt="Maxel Tour" />
+        <h1 id="authTitle">Private Dashboard</h1>
+        <label>
+          <span>Password</span>
+          <input id="passwordInput" type="password" autocomplete="current-password" />
+        </label>
+        <button class="primary-button icon-button text-button" id="unlockButton" type="button">
+          <i data-lucide="lock-keyhole-open"></i>
+          <span>Unlock</span>
+        </button>
+        <div class="auth-message" id="authMessage" role="status" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <div class="app-shell is-locked" id="appShell">
       <header class="topbar">
         <div class="planner-title">
           <img class="brand-logo" src="assets/maxel-tour-logo.png" alt="Maxel Tour" />
@@ -23,15 +39,10 @@
             <i data-lucide="calendar-days"></i>
             <span>Today</span>
           </button>
-          <button class="icon-button text-button" id="exportButton" type="button" title="Export backup">
+          <button class="icon-button text-button" id="exportButton" type="button" title="Download JSON backup">
             <i data-lucide="download"></i>
-            <span>Export</span>
+            <span>Backup</span>
           </button>
-          <label class="icon-button text-button file-button" title="Import backup">
-            <i data-lucide="upload"></i>
-            <span>Import</span>
-            <input id="importFile" type="file" accept="application/json" />
-          </label>
         </div>
       </header>
 
@@ -83,23 +94,47 @@
             <span>Days ahead</span>
             <input id="leadDays" type="number" min="1" max="365" value="60" />
           </label>
-          <button class="icon-button text-button" id="reminderButton" type="button" title="Enable browser reminder">
-            <i data-lucide="alarm-clock"></i>
-            <span>Reminder</span>
-          </button>
+          <div class="reminder-group" role="group" aria-label="Release reminders">
+            <span>Reminders</span>
+            <label class="check-option">
+              <input id="reminder60" type="checkbox" checked />
+              <span>1 hour</span>
+            </label>
+            <label class="check-option">
+              <input id="reminder30" type="checkbox" checked />
+              <span>30 min</span>
+            </label>
+            <button class="icon-button text-button" id="reminderButton" type="button" title="Enable browser reminders">
+              <i data-lucide="alarm-clock"></i>
+              <span>Enable</span>
+            </button>
+          </div>
           <div class="status-message" id="statusMessage" role="status" aria-live="polite"></div>
         </section>
 
+        <section class="action-bar" aria-label="Purchase action">
+          <button class="primary-button icon-button text-button" id="actionToggle" type="button" aria-expanded="false">
+            <i data-lucide="plus"></i>
+            <span>Add purchase</span>
+          </button>
+          <span id="actionContext">Select a date or add a purchase.</span>
+        </section>
+
         <div class="workspace-grid">
-          <section class="panel planner-panel" aria-labelledby="plannerTitle">
+          <section class="panel planner-panel is-collapsed" id="plannerPanel" aria-labelledby="plannerTitle">
             <div class="panel-heading">
               <div>
                 <p class="section-kicker">Daily action</p>
                 <h2 id="plannerTitle">Purchase Record</h2>
               </div>
-              <button class="icon-button" id="clearFormButton" type="button" title="New purchase">
-                <i data-lucide="plus"></i>
-              </button>
+              <div class="panel-tools">
+                <button class="icon-button" id="clearFormButton" type="button" title="New purchase">
+                  <i data-lucide="plus"></i>
+                </button>
+                <button class="icon-button" id="closeFormButton" type="button" title="Close form">
+                  <i data-lucide="x"></i>
+                </button>
+              </div>
             </div>
 
             <form id="ticketForm" class="ticket-form">
@@ -200,7 +235,6 @@
             <span><b class="dot bought"></b>Bought</span>
             <span><b class="dot partial"></b>Partial</span>
             <span><b class="dot due"></b>Due</span>
-            <span><b class="dot overdue"></b>Overdue</span>
             <span><b class="dot upcoming"></b>Upcoming</span>
             <span><b class="dot closed"></b>Closed Sunday</span>
           </div>
@@ -218,6 +252,14 @@
                 <i data-lucide="search"></i>
                 <input id="searchRecords" type="search" placeholder="Search" />
               </label>
+              <label class="range-field">
+                <span>From</span>
+                <input id="exportStartDate" type="date" />
+              </label>
+              <label class="range-field">
+                <span>To</span>
+                <input id="exportEndDate" type="date" />
+              </label>
               <select id="statusFilter" title="Filter records">
                 <option value="all">All</option>
                 <option value="bought">Bought</option>
@@ -226,8 +268,13 @@
                 <option value="not-needed">No need</option>
                 <option value="closed">Closed Sunday</option>
               </select>
-              <button class="icon-button" id="csvButton" type="button" title="Export CSV">
+              <select id="exportFormat" title="Export format">
+                <option value="excel">Excel</option>
+                <option value="pdf">PDF</option>
+              </select>
+              <button class="icon-button text-button" id="reportExportButton" type="button" title="Export selected range">
                 <i data-lucide="file-spreadsheet"></i>
+                <span>Export</span>
               </button>
             </div>
           </div>
@@ -254,7 +301,7 @@
         </section>
       </main>
       <footer class="site-footer" aria-label="Credit">
-        <span>alee</span>
+        <span>made with ❤️ by alee</span>
       </footer>
     </div>
   </body>

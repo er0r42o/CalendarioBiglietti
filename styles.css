@@ -41,8 +41,7 @@ textarea {
   font: inherit;
 }
 
-button,
-label.file-button {
+button {
   border: 0;
 }
 
@@ -50,6 +49,69 @@ label.file-button {
   width: min(1440px, 100%);
   margin: 0 auto;
   padding: 24px;
+}
+
+.app-shell.is-locked {
+  display: none;
+}
+
+.auth-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.auth-screen.is-unlocked {
+  display: none;
+}
+
+.auth-card {
+  width: min(420px, 100%);
+  display: grid;
+  gap: 16px;
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: var(--shadow);
+}
+
+.auth-card img {
+  width: 180px;
+  height: auto;
+}
+
+.auth-card h1 {
+  font-size: 1.45rem;
+}
+
+.auth-card label {
+  display: grid;
+  gap: 7px;
+}
+
+.auth-card label span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.auth-card input {
+  width: 100%;
+  min-height: 44px;
+  padding: 9px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.auth-message {
+  min-height: 20px;
+  color: var(--red);
+  font-size: 0.88rem;
+  font-weight: 800;
 }
 
 .topbar {
@@ -114,8 +176,7 @@ h2 {
   flex-wrap: wrap;
 }
 
-.icon-button,
-.file-button {
+.icon-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -136,15 +197,13 @@ h2 {
     background-color 120ms ease;
 }
 
-.icon-button:hover,
-.file-button:hover {
+.icon-button:hover {
   transform: translateY(-1px);
   border-color: var(--line-strong);
   box-shadow: 0 8px 22px rgba(38, 52, 82, 0.10);
 }
 
 .icon-button:focus-visible,
-.file-button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
@@ -152,8 +211,7 @@ textarea:focus-visible {
   outline-offset: 2px;
 }
 
-.icon-button svg,
-.file-button svg {
+.icon-button svg {
   width: 18px;
   height: 18px;
   flex: 0 0 auto;
@@ -171,10 +229,6 @@ textarea:focus-visible {
 
 .danger-button {
   color: var(--red);
-}
-
-.file-button input {
-  display: none;
 }
 
 .overview-grid {
@@ -286,6 +340,7 @@ textarea:focus-visible {
 .ticket-form select,
 .ticket-form textarea,
 .record-tools select,
+.range-field input,
 .search-field {
   min-height: 40px;
   border: 1px solid var(--line-strong);
@@ -298,13 +353,57 @@ textarea:focus-visible {
 .ticket-form input,
 .ticket-form select,
 .ticket-form textarea,
-.record-tools select {
+.record-tools select,
+.range-field input {
   width: 100%;
   padding: 9px 11px;
 }
 
 .settings-bar input {
   width: 150px;
+}
+
+.reminder-group {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.reminder-group > span {
+  width: 100%;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.check-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 0 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.check-option input {
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  padding: 0;
+  border: 0;
+  accent-color: var(--teal);
+}
+
+.check-option span {
+  color: var(--ink);
+  font-size: 0.88rem;
+  font-weight: 800;
 }
 
 .status-message {
@@ -323,6 +422,25 @@ textarea:focus-visible {
   margin-bottom: 14px;
 }
 
+.action-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.action-bar > span {
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
 .panel {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -337,6 +455,16 @@ textarea:focus-visible {
   gap: 16px;
   padding: 16px 18px;
   border-bottom: 1px solid var(--line);
+}
+
+.panel-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.planner-panel.is-collapsed {
+  display: none;
 }
 
 .ticket-form {
@@ -386,8 +514,7 @@ textarea:focus-visible {
   color: #805000;
 }
 
-.status-missed,
-.status-overdue {
+.status-missed {
   background: #ffebeb;
   color: #9d2c2c;
 }
@@ -451,10 +578,6 @@ textarea:focus-visible {
 
 .dot.partial {
   background: var(--amber);
-}
-
-.dot.overdue {
-  background: var(--red);
 }
 
 .dot.upcoming {
@@ -556,10 +679,6 @@ textarea:focus-visible {
   background: var(--amber);
 }
 
-.day-cell.is-overdue::before {
-  background: var(--red);
-}
-
 .day-cell.is-missed::before {
   background: var(--red);
 }
@@ -609,6 +728,10 @@ textarea:focus-visible {
   align-items: center;
 }
 
+.record-tools {
+  align-items: end;
+}
+
 .search-field {
   display: flex;
   align-items: center;
@@ -631,6 +754,20 @@ textarea:focus-visible {
   outline: 0;
   background: transparent;
   color: var(--ink);
+}
+
+.range-field {
+  display: grid;
+  gap: 5px;
+  width: 144px;
+}
+
+.range-field span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 .record-tools select {
@@ -732,6 +869,16 @@ tbody tr {
     width: 100%;
   }
 
+  .record-tools {
+    align-items: stretch;
+  }
+
+  .search-field,
+  .range-field,
+  .record-tools select {
+    width: 100%;
+  }
+
   .text-button {
     flex: 1 1 auto;
   }
@@ -762,8 +909,13 @@ tbody tr {
 
   .settings-bar label,
   .settings-bar input,
-  .settings-bar button {
+  .settings-bar button,
+  .reminder-group {
     width: 100%;
+  }
+
+  .check-option {
+    flex: 1 1 120px;
   }
 
   .ticket-form {
